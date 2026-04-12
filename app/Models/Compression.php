@@ -51,6 +51,6 @@ class Compression extends Model
         if (! $this->path) {
             return null;
         }
-        return asset('storage/' . $this->path);
+        return url('/api/compressions/' . $this->id . '/download');
     }
 }

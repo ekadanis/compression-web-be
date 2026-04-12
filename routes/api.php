@@ -17,6 +17,9 @@ Route::prefix('auth')->group(function () {
     Route::post('/login',    [AuthController::class, 'login']);
 });
 
+// Public download route
+Route::get('/compressions/{id}/download', [CompressionController::class, 'download']);
+
 // Authenticated routes
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/auth/logout', [AuthController::class, 'logout']);

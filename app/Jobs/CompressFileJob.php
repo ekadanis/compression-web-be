@@ -108,8 +108,21 @@ class CompressFileJob implements ShouldQueue
             }
         } else {
             // Audio compression
-            if ($c->codec) {
-                $cmd .= " -acodec " . escapeshellarg($c->codec);
+            $acodec = $c->codec;
+
+            // Auto-correct incompatible audio codecs for certain containers to prevent errors or unplayable files
+            if ($c->format === 'ogg') {
+                $acodec = 'libvorbis';
+            } elseif ($c->format === 'aac') {
+                $acodec = 'aac';
+            } elseif ($c->format === 'wav') {
+                $acodec = 'pcm_s16le';
+            } elseif ($c->format === 'mp3') {
+                $acodec = 'libmp3lame';
+            }
+
+            if ($acodec) {
+                $cmd .= " -acodec " . escapeshellarg($acodec);
             }
             if ($c->audio_bitrate) {
                 $cmd .= " -b:a " . (int) $c->audio_bitrate . "k";

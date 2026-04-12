@@ -45,6 +45,33 @@ class CompressionController extends Controller
     }
 
     /**
+     * GET /api/compressions/{id}/download
+     * Force download the file.
+     */
+    public function download(int $id)
+    {
+        $compression = Compression::findOrFail($id);
+        $path = \Illuminate\Support\Facades\Storage::disk('public')->path($compression->path);
+
+        if (!file_exists($path)) {
+            abort(404, 'File not found');
+        }
+
+        $filename = 'compressed_' . $compression->file_id . '_' . $compression->id . '.' . $compression->format;
+
+        return response()->streamDownload(function () use ($path) {
+            $stream = fopen($path, 'r');
+            fpassthru($stream);
+            fclose($stream);
+        }, $filename, [
+            'Content-Type' => 'application/octet-stream',
+            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+            'X-Content-Type-Options' => 'nosniff',
+            'Access-Control-Allow-Origin' => '*',
+        ]);
+    }
+
+    /**
      * GET /api/compressions/{id}
      * Show single compression detail.
      */
@@ -88,6 +115,9 @@ class CompressionController extends Controller
         $file = File::where('user_id', $request->user()->id)
             ->findOrFail($request->integer('file_id'));
 
+        $originalPath = \Illuminate\Support\Facades\Storage::disk('public')->path($file->original_path);
+        $metadata     = $this->getOriginalFileMetadata($originalPath, $file->type);
+
         $compressions = $file->compressions()
             ->whereIn('id', $request->input('ids'))
             ->where('status', 'done')
@@ -113,13 +143,82 @@ class CompressionController extends Controller
             });
 
         return response()->json([
-            'original' => [
+            'original' => array_merge([
                 'name'     => $file->name,
                 'size'     => $file->size,
                 'type'     => $file->type,
                 'duration' => $file->duration,
-            ],
+            ], $metadata),
             'compressions' => $compressions,
         ]);
+    }
+
+    private function getOriginalFileMetadata(string $path, string $type): array
+    {
+        $data = [
+            'codec'         => null,
+            'bitrate'       => null,
+            'resolution'    => null,
+            'audio_bitrate' => null,
+            'channel'       => null,
+        ];
+
+        if (! file_exists($path)) {
+            return $data;
+        }
+
+        $cmd = 'ffprobe -v error -print_format json -show_format -show_streams ' . escapeshellarg($path);
+        $output = shell_exec($cmd);
+        $info = json_decode($output, true);
+
+        if (!$info) {
+            return $data;
+        }
+
+        $format  = $info['format'] ?? [];
+        $streams = $info['streams'] ?? [];
+
+        $videoStream = null;
+        $audioStream = null;
+
+        foreach ($streams as $s) {
+            if (isset($s['codec_type'])) {
+                if ($s['codec_type'] === 'video' && !$videoStream) {
+                    $videoStream = $s;
+                } elseif ($s['codec_type'] === 'audio' && !$audioStream) {
+                    $audioStream = $s;
+                }
+            }
+        }
+
+        if ($type === 'video') {
+            if ($videoStream) {
+                $data['codec'] = $videoStream['codec_name'] ?? null;
+                if (isset($videoStream['width']) && isset($videoStream['height'])) {
+                    $data['resolution'] = $videoStream['width'] . ':' . $videoStream['height'];
+                }
+            }
+        } else {
+            if ($audioStream) {
+                $data['codec'] = $audioStream['codec_name'] ?? null;
+            }
+        }
+
+        if (isset($format['bit_rate'])) {
+            $data['bitrate'] = round($format['bit_rate'] / 1000);
+        } elseif (isset($videoStream['bit_rate'])) {
+            $data['bitrate'] = round($videoStream['bit_rate'] / 1000);
+        }
+
+        if ($audioStream) {
+            if (isset($audioStream['bit_rate'])) {
+                $data['audio_bitrate'] = round($audioStream['bit_rate'] / 1000);
+            }
+            if (isset($audioStream['channels'])) {
+                $data['channel'] = $audioStream['channels'] == 2 ? 'stereo' : ($audioStream['channels'] == 1 ? 'mono' : (string)$audioStream['channels']);
+            }
+        }
+
+        return $data;
     }
 }
