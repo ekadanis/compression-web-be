@@ -35,4 +35,19 @@ return [
         ],
     ],
 
+    'google' => [
+        'client_id' => env('GOOGLE_CLIENT_ID'),
+        'client_secret' => env('GOOGLE_CLIENT_SECRET'),
+        'redirect' => env('GOOGLE_REDIRECT_URI'),
+        'frontend_redirect' => env('GOOGLE_FRONTEND_REDIRECT_URI', env('FRONTEND_URL')),
+        'youtube_scopes' => array_filter(explode(',', env('GOOGLE_YOUTUBE_SCOPES', ''))),
+    ],
+
+    'soundcloud' => [
+        'client_id' => env('SOUNDCLOUD_CLIENT_ID'),
+        'client_secret' => env('SOUNDCLOUD_CLIENT_SECRET'),
+        'redirect' => env('SOUNDCLOUD_REDIRECT_URI'),
+        'frontend_redirect' => env('SOUNDCLOUD_FRONTEND_REDIRECT_URI', rtrim((string) env('FRONTEND_URL'), '/').'/soundcloud'),
+    ],
+
 ];
