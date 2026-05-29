@@ -10,6 +10,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use RuntimeException;
 
 class CompressFileJob implements ShouldQueue
 {
@@ -34,13 +35,12 @@ class CompressFileJob implements ShouldQueue
             mkdir($outputDir, 0775, true);
         }
 
+        $durationSeconds = $this->resolveDurationSeconds($inputPath);
         $command = $this->buildCommand($inputPath, $outputPath);
 
         Log::info('CompressFileJob: running', ['command' => $command]);
 
-        $output   = [];
-        $exitCode = 0;
-        exec($command . ' 2>&1', $output, $exitCode);
+        [$exitCode, $output] = $this->runCommandWithProgress($command, $durationSeconds);
 
         if ($exitCode !== 0) {
             $errorMsg = implode("\n", array_slice($output, -20)); // last 20 lines
@@ -58,6 +58,7 @@ class CompressFileJob implements ShouldQueue
         $this->compression->update([
             'status' => 'done',
             'size'   => $size,
+            'progress' => 100,
         ]);
 
         // Mark parent file as done if all compressions are done
@@ -76,6 +77,7 @@ class CompressFileJob implements ShouldQueue
     {
         $this->compression->update([
             'status'        => 'failed',
+            'progress'      => 0,
             'error_message' => $exception->getMessage(),
         ]);
         $this->file->update(['status' => 'failed']);
@@ -139,8 +141,121 @@ class CompressFileJob implements ShouldQueue
             $cmd .= " -vn";
         }
 
-        $cmd .= " " . escapeshellarg($output);
+        $cmd .= " -progress pipe:1 -nostats " . escapeshellarg($output);
 
         return $cmd;
+    }
+
+    /**
+     * @return array{0:int,1:array<int,string>}
+     */
+    private function runCommandWithProgress(string $command, ?float $durationSeconds): array
+    {
+        $descriptors = [
+            0 => ['pipe', 'r'],
+            1 => ['pipe', 'w'],
+            2 => ['pipe', 'w'],
+        ];
+
+        $process = proc_open($command, $descriptors, $pipes);
+
+        if (! is_resource($process)) {
+            throw new RuntimeException('Failed to start FFmpeg process.');
+        }
+
+        fclose($pipes[0]);
+        stream_set_blocking($pipes[1], false);
+        stream_set_blocking($pipes[2], false);
+
+        $stderrOutput = [];
+        $stdoutBuffer = '';
+        $stderrBuffer = '';
+
+        while (true) {
+            $status = proc_get_status($process);
+            $stdoutChunk = stream_get_contents($pipes[1]);
+            $stderrChunk = stream_get_contents($pipes[2]);
+
+            if ($stdoutChunk !== false && $stdoutChunk !== '') {
+                $stdoutBuffer .= $stdoutChunk;
+
+                while (($pos = strpos($stdoutBuffer, "\n")) !== false) {
+                    $line = trim(substr($stdoutBuffer, 0, $pos));
+                    $stdoutBuffer = substr($stdoutBuffer, $pos + 1);
+                    $this->handleProgressLine($line, $durationSeconds);
+                }
+            }
+
+            if ($stderrChunk !== false && $stderrChunk !== '') {
+                $stderrBuffer .= $stderrChunk;
+
+                while (($pos = strpos($stderrBuffer, "\n")) !== false) {
+                    $line = trim(substr($stderrBuffer, 0, $pos));
+                    $stderrBuffer = substr($stderrBuffer, $pos + 1);
+                    if ($line !== '') {
+                        $stderrOutput[] = $line;
+                    }
+                }
+            }
+
+            if (! $status['running']) {
+                break;
+            }
+
+            usleep(200000);
+        }
+
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+
+        $exitCode = proc_close($process);
+
+        if (trim($stderrBuffer) !== '') {
+            $stderrOutput[] = trim($stderrBuffer);
+        }
+
+        if (trim($stdoutBuffer) !== '') {
+            $stderrOutput[] = trim($stdoutBuffer);
+        }
+
+        return [$exitCode, $stderrOutput];
+    }
+
+    private function handleProgressLine(string $line, ?float $durationSeconds): void
+    {
+        if ($line === '' || ! str_contains($line, '=')) {
+            return;
+        }
+
+        [$key, $value] = array_pad(explode('=', $line, 2), 2, null);
+
+        if ($key !== 'out_time_ms' || $value === null || ! is_numeric($value) || ! $durationSeconds || $durationSeconds <= 0) {
+            return;
+        }
+
+        $processedSeconds = ((float) $value) / 1000000;
+        $progress = min(99, max(1, (int) floor(($processedSeconds / $durationSeconds) * 100)));
+
+        if ($progress !== (int) $this->compression->progress) {
+            $this->compression->forceFill(['progress' => $progress])->save();
+        }
+    }
+
+    private function resolveDurationSeconds(string $inputPath): ?float
+    {
+        if ($this->file->duration && $this->file->duration > 0) {
+            return (float) $this->file->duration;
+        }
+
+        $cmd = 'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 '.escapeshellarg($inputPath);
+        $output = shell_exec($cmd);
+
+        if (! $output) {
+            return null;
+        }
+
+        $duration = (float) trim($output);
+
+        return $duration > 0 ? $duration : null;
     }
 }

@@ -31,6 +31,7 @@ class CompressionService
             'is_recommended'=> $data['is_recommended'] ?? false,
             'path'          => $outputPath,
             'status'        => 'processing',
+            'progress'      => 0,
         ]);
 
         // Mark parent file as processing

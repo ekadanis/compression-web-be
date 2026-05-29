@@ -9,6 +9,7 @@ use App\Models\File;
 use App\Services\CompressionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 class CompressionController extends Controller
 {
@@ -50,8 +51,8 @@ class CompressionController extends Controller
      */
     public function download(int $id)
     {
-        $compression = Compression::findOrFail($id);
-        $path = \Illuminate\Support\Facades\Storage::disk('public')->path($compression->path);
+        $compression = Compression::with('file')->findOrFail($id);
+        $path = Storage::disk('public')->path($compression->path);
 
         if (!file_exists($path)) {
             abort(404, 'File not found');
@@ -59,14 +60,25 @@ class CompressionController extends Controller
 
         $filename = 'compressed_' . $compression->file_id . '_' . $compression->id . '.' . $compression->format;
 
-        return response()->streamDownload(function () use ($path) {
-            $stream = fopen($path, 'r');
-            fpassthru($stream);
-            fclose($stream);
-        }, $filename, [
-            'Content-Type' => 'application/octet-stream',
+        return response()->download($path, $filename, [
+            'Content-Type' => $this->resolveCompressionMimeType($compression),
             'Content-Disposition' => 'attachment; filename="' . $filename . '"',
             'X-Content-Type-Options' => 'nosniff',
+            'Access-Control-Allow-Origin' => '*',
+        ]);
+    }
+
+    public function stream(int $id)
+    {
+        $compression = Compression::with('file')->findOrFail($id);
+        $path = Storage::disk('public')->path($compression->path);
+
+        if (! file_exists($path)) {
+            abort(404, 'File not found');
+        }
+
+        return response()->file($path, [
+            'Content-Type' => $this->resolveCompressionMimeType($compression),
             'Access-Control-Allow-Origin' => '*',
         ]);
     }
@@ -220,5 +232,20 @@ class CompressionController extends Controller
         }
 
         return $data;
+    }
+
+    private function resolveCompressionMimeType(Compression $compression): string
+    {
+        return match ($compression->format) {
+            'mp4' => 'video/mp4',
+            'mkv' => 'video/x-matroska',
+            'avi' => 'video/x-msvideo',
+            'mov' => 'video/quicktime',
+            'mp3' => 'audio/mpeg',
+            'wav' => 'audio/wav',
+            'aac' => 'audio/aac',
+            'ogg' => 'audio/ogg',
+            default => $compression->file?->type === 'audio' ? 'audio/*' : 'video/*',
+        };
     }
 }

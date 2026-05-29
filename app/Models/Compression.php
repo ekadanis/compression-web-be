@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 class Compression extends Model
 {
@@ -24,10 +25,11 @@ class Compression extends Model
         'path',
         'is_recommended',
         'status',
+        'progress',
         'error_message',
     ];
 
-    protected $appends = ['url'];
+    protected $appends = ['url', 'stream_url'];
 
     protected $casts = [
         'bitrate'       => 'integer',
@@ -35,12 +37,18 @@ class Compression extends Model
         'audio_bitrate' => 'integer',
         'sample_rate'   => 'integer',
         'size'          => 'integer',
+        'progress'      => 'integer',
         'is_recommended'=> 'boolean',
     ];
 
     public function file(): BelongsTo
     {
         return $this->belongsTo(File::class);
+    }
+
+    public function uploads(): MorphMany
+    {
+        return $this->morphMany(Upload::class, 'uploadable');
     }
 
     /**
@@ -52,5 +60,14 @@ class Compression extends Model
             return null;
         }
         return url('/api/compressions/' . $this->id . '/download');
+    }
+
+    public function getStreamUrlAttribute(): ?string
+    {
+        if (! $this->path) {
+            return null;
+        }
+
+        return url('/api/compressions/' . $this->id . '/stream');
     }
 }
