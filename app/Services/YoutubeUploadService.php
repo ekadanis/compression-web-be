@@ -8,6 +8,7 @@ use Google\Service\YouTube;
 use Google\Service\YouTube\Video;
 use Google\Service\YouTube\VideoSnippet;
 use Google\Service\YouTube\VideoStatus;
+use Psr\Http\Message\RequestInterface;
 use RuntimeException;
 
 class YoutubeUploadService
@@ -61,9 +62,10 @@ class YoutubeUploadService
 
         $client->setDefer(true);
 
+        /** @var RequestInterface $insertRequest */
         $insertRequest = $youtube->videos->insert('snippet,status', $video);
         $chunkSize = (int) env('YOUTUBE_UPLOAD_CHUNK_SIZE', 8 * 1024 * 1024);
-        $media = new MediaFileUpload($client, $insertRequest, $source['mime_type'], null, true, $chunkSize);
+        $media = new MediaFileUpload($client, $insertRequest, $source['mime_type'], '', true, $chunkSize);
 
         $handle = fopen($source['path'], 'rb');
         if ($handle === false) {
