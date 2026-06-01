@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class SoundCloudAccount extends Model
 {
+    protected $table = 'soundcloud_accounts';
+
     protected $fillable = [
         'user_id',
         'soundcloud_user_id',
