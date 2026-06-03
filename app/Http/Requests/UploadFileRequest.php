@@ -13,7 +13,7 @@ class UploadFileRequest extends FormRequest
 
     public function rules(): array
     {
-        $maxSize = 512 * 1024; // 512 MB in kilobytes
+        $maxSize = 512 * 1024 * 1024; // 512 MB in kilobytes  
 
         return [
             'file' => [
