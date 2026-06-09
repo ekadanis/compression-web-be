@@ -20,10 +20,38 @@ class FileController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $files = File::where('user_id', $request->user()->id)
-            ->withCount('compressions')
-            ->latest()
-            ->paginate(15);
+        $validated = $request->validate([
+            'type' => ['nullable', 'in:all,audio,video'],
+            'search' => ['nullable', 'string', 'max:255'],
+            'sort' => ['nullable', 'in:updated_desc,updated_asc,name_asc,name_desc'],
+        ]);
+
+        $sort = $validated['sort'] ?? 'updated_desc';
+
+        $query = File::query()
+            ->where('user_id', $request->user()->id)
+            ->withCount('compressions');
+
+        if (($validated['type'] ?? 'all') !== 'all') {
+            $query->where('type', $validated['type']);
+        }
+
+        if (! empty($validated['search'])) {
+            $search = $validated['search'];
+            $query->where(function ($q) use ($search): void {
+                $q->where('name', 'like', "%{$search}%")
+                    ->orWhere('mime_type', 'like', "%{$search}%");
+            });
+        }
+
+        match ($sort) {
+            'updated_asc' => $query->orderBy('updated_at')->orderBy('id'),
+            'name_asc' => $query->orderBy('name')->orderBy('id'),
+            'name_desc' => $query->orderByDesc('name')->orderByDesc('id'),
+            default => $query->orderByDesc('updated_at')->orderByDesc('id'),
+        };
+
+        $files = $query->paginate(15)->withQueryString();
 
         return response()->json($files);
     }
