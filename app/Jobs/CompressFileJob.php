@@ -37,15 +37,17 @@ class CompressFileJob implements ShouldQueue
 
         $durationSeconds = $this->resolveDurationSeconds($inputPath);
         $command = $this->buildCommand($inputPath, $outputPath);
+        $startedAt = microtime(true);
 
         Log::info('CompressFileJob: running', ['command' => $command]);
 
-        [$exitCode, $output] = $this->runCommandWithProgress($command, $durationSeconds);
+        [$exitCode, $output] = $this->runCommandWithProgress($command, $durationSeconds, $startedAt);
 
         if ($exitCode !== 0) {
             $errorMsg = implode("\n", array_slice($output, -20)); // last 20 lines
             $this->compression->update([
-                'status'        => 'failed',
+                'status' => 'failed',
+                'estimated_seconds_remaining' => null,
                 'error_message' => $errorMsg,
             ]);
             $this->file->update(['status' => 'failed']);
@@ -59,6 +61,7 @@ class CompressFileJob implements ShouldQueue
             'status' => 'done',
             'size'   => $size,
             'progress' => 100,
+            'estimated_seconds_remaining' => null,
         ]);
 
         // Mark parent file as done if all compressions are done
@@ -78,6 +81,7 @@ class CompressFileJob implements ShouldQueue
         $this->compression->update([
             'status'        => 'failed',
             'progress'      => 0,
+            'estimated_seconds_remaining' => null,
             'error_message' => $exception->getMessage(),
         ]);
         $this->file->update(['status' => 'failed']);
@@ -149,7 +153,7 @@ class CompressFileJob implements ShouldQueue
     /**
      * @return array{0:int,1:array<int,string>}
      */
-    private function runCommandWithProgress(string $command, ?float $durationSeconds): array
+    private function runCommandWithProgress(string $command, ?float $durationSeconds, float $startedAt): array
     {
         $descriptors = [
             0 => ['pipe', 'r'],
@@ -182,7 +186,7 @@ class CompressFileJob implements ShouldQueue
                 while (($pos = strpos($stdoutBuffer, "\n")) !== false) {
                     $line = trim(substr($stdoutBuffer, 0, $pos));
                     $stdoutBuffer = substr($stdoutBuffer, $pos + 1);
-                    $this->handleProgressLine($line, $durationSeconds);
+                    $this->handleProgressLine($line, $durationSeconds, $startedAt);
                 }
             }
 
@@ -221,7 +225,7 @@ class CompressFileJob implements ShouldQueue
         return [$exitCode, $stderrOutput];
     }
 
-    private function handleProgressLine(string $line, ?float $durationSeconds): void
+    private function handleProgressLine(string $line, ?float $durationSeconds, float $startedAt): void
     {
         if ($line === '' || ! str_contains($line, '=')) {
             return;
@@ -235,9 +239,14 @@ class CompressFileJob implements ShouldQueue
 
         $processedSeconds = ((float) $value) / 1000000;
         $progress = min(99, max(1, (int) floor(($processedSeconds / $durationSeconds) * 100)));
+        $elapsed = max(1, microtime(true) - $startedAt);
+        $eta = $progress > 0 ? max(1, (int) round(($elapsed / $progress) * (100 - $progress))) : null;
 
         if ($progress !== (int) $this->compression->progress) {
-            $this->compression->forceFill(['progress' => $progress])->save();
+            $this->compression->forceFill([
+                'progress' => $progress,
+                'estimated_seconds_remaining' => $eta,
+            ])->save();
         }
     }
 

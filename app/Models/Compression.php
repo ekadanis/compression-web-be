@@ -26,6 +26,7 @@ class Compression extends Model
         'is_recommended',
         'status',
         'progress',
+        'estimated_seconds_remaining',
         'error_message',
     ];
 
@@ -38,6 +39,7 @@ class Compression extends Model
         'sample_rate'   => 'integer',
         'size'          => 'integer',
         'progress'      => 'integer',
+        'estimated_seconds_remaining' => 'integer',
         'is_recommended'=> 'boolean',
     ];
 
