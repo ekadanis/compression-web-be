@@ -9,13 +9,18 @@ use App\Models\Compression;
 use App\Models\File;
 use App\Models\Upload;
 use App\Services\GoogleOAuthService;
+use App\Services\YoutubeUploadService;
+use Google\Service\Exception as GoogleServiceException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 
 class YoutubeController extends Controller
 {
-    public function __construct(private readonly GoogleOAuthService $googleOAuthService)
+    public function __construct(
+        private readonly GoogleOAuthService $googleOAuthService,
+        private readonly YoutubeUploadService $youtubeUploadService,
+    )
     {
     }
 
@@ -149,12 +154,34 @@ class YoutubeController extends Controller
     public function destroy(Request $request, Upload $upload): JsonResponse
     {
         abort_unless($upload->user_id === $request->user()->id, 403);
-        abort_unless(in_array($upload->status, ['scheduled', 'pending'], true), 422);
 
-        $upload->update(['status' => 'cancelled']);
+        abort_unless(in_array($upload->status, ['scheduled', 'pending', 'processing', 'uploaded', 'failed', 'cancelled'], true), 422);
+
+        $wasUploaded = $upload->status === 'uploaded';
+
+        if ($wasUploaded && $upload->external_id) {
+            try {
+                $this->youtubeUploadService->deleteVideo($upload);
+            } catch (GoogleServiceException $exception) {
+                if ($exception->getCode() === 403 && str_contains($exception->getMessage(), 'ACCESS_TOKEN_SCOPE_INSUFFICIENT')) {
+                    abort(422, 'Akun YouTube perlu dihubungkan ulang untuk memberi izin hapus video. Disconnect lalu Connect YouTube lagi.');
+                }
+
+                if ($exception->getCode() === 404 && str_contains($exception->getMessage(), 'videoNotFound')) {
+                    abort(422, 'Video tidak ditemukan oleh akun YouTube yang sedang terhubung. Pastikan akun/channel yang connect sama dengan akun/channel yang mengupload video ini.');
+                }
+
+                throw $exception;
+            }
+        }
+
+        $upload->update([
+            'status' => 'cancelled',
+            'cancel_requested_at' => $upload->cancel_requested_at ?: now(),
+        ]);
 
         return response()->json([
-            'message' => 'Upload dibatalkan.',
+            'message' => $wasUploaded ? 'Video YouTube dihapus.' : 'Upload dibatalkan.',
         ]);
     }
 }

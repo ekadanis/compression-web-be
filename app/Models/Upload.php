@@ -24,6 +24,7 @@ class Upload extends Model
         'scheduled_at',
         'started_at',
         'uploaded_at',
+        'cancel_requested_at',
         'external_id',
         'url',
         'metadata',
@@ -35,6 +36,7 @@ class Upload extends Model
         'scheduled_at' => 'datetime',
         'started_at' => 'datetime',
         'uploaded_at' => 'datetime',
+        'cancel_requested_at' => 'datetime',
         'progress' => 'integer',
     ];
 

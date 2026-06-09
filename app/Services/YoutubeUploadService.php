@@ -85,6 +85,12 @@ class YoutubeUploadService
 
         try {
             while (! $response && ! feof($handle)) {
+                $upload->refresh();
+
+                if ($upload->cancel_requested_at || $upload->status === 'cancelled') {
+                    throw new RuntimeException('Upload dibatalkan.');
+                }
+
                 $chunk = fread($handle, $chunkSize);
 
                 if ($chunk === false) {
@@ -118,6 +124,27 @@ class YoutubeUploadService
             'url' => 'https://www.youtube.com/watch?v='.$videoId,
             'metadata' => $this->normalizeMetadata($response),
         ];
+    }
+
+    public function deleteVideo(Upload $upload, ?string $videoId = null): void
+    {
+        $upload->loadMissing('user.youtubeAccount');
+
+        $account = $upload->user->youtubeAccount;
+
+        if (! $account) {
+            throw new RuntimeException('Akun YouTube belum terhubung.');
+        }
+
+        $id = $videoId ?: $upload->external_id;
+
+        if (! $id) {
+            return;
+        }
+
+        $client = $this->googleOAuthService->authorizedClient($account);
+        $youtube = new YouTube($client);
+        $youtube->videos->delete($id);
     }
 
     private function extractVideoId(mixed $response): ?string

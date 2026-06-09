@@ -30,13 +30,48 @@ class UploadToYoutubeJob implements ShouldQueue
             return;
         }
 
+        if ($upload->cancel_requested_at) {
+            $upload->forceFill(['status' => 'cancelled'])->save();
+            return;
+        }
+
         $upload->forceFill([
             'status' => 'processing',
             'started_at' => now(),
             'error_message' => null,
         ])->save();
 
-        $result = $youtubeUploadService->upload($upload);
+        try {
+            $result = $youtubeUploadService->upload($upload);
+        } catch (\RuntimeException $exception) {
+            $upload->refresh();
+
+            if ($upload->cancel_requested_at || $exception->getMessage() === 'Upload dibatalkan.') {
+                $upload->forceFill([
+                    'status' => 'cancelled',
+                    'error_message' => null,
+                ])->save();
+
+                return;
+            }
+
+            throw $exception;
+        }
+
+        $upload->refresh();
+
+        if ($upload->cancel_requested_at) {
+            if (! empty($result['external_id'])) {
+                $youtubeUploadService->deleteVideo($upload, $result['external_id']);
+            }
+
+            $upload->forceFill([
+                'status' => 'cancelled',
+                'error_message' => null,
+            ])->save();
+
+            return;
+        }
 
         $upload->forceFill([
             'status' => 'uploaded',
